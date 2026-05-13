@@ -45,22 +45,7 @@ function ShoppingLinks({ ingredientName }) {
     const lowestPrice = Math.min(...links.map(l => l.price || Infinity));
 
     return (
-        <div className="flex gap-1.5 flex-wrap items-center">
-            {links.map((link, idx) => {
-                const isLowest = link.price === lowestPrice;
-                return (
-                    <a
-                        key={idx}
-                        href={link.purchaseUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className={`text-xs px-2 py-0.5 rounded-md text-white transition-opacity hover:opacity-80 ${isLowest ? 'bg-green-500 font-bold' : 'bg-blue-400'}`}
-                    >
-                        Buy ({link.mallName}: {link.price?.toLocaleString()}원)
-                    </a>
-                );
-            })}
-        </div>
+        <></>
     );
 }
 
