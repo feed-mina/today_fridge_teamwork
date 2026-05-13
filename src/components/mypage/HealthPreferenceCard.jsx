@@ -1,5 +1,5 @@
 "use client";
-import { requestHealthPreferenceSave } from "@/api/myPageApi";
+import { requestHealthPreferenceSave, updatePhysicalMetrics } from "@/api/myPageApi";
 
 const initialForm = {
   heightCm: "",
@@ -39,7 +39,7 @@ function CheckboxField({ defaultChecked, disabled, label, name }) {
     </label>
   );
 }
-export default function HealthPreferenceCard({ profile, loading }) {
+export default function HealthPreferenceCard({ profile, loading, onRefresh }) {
   const defaults = getInitialForm(profile);
   const profileVersion = Object.values(defaults).join(":");
 
@@ -48,15 +48,30 @@ export default function HealthPreferenceCard({ profile, loading }) {
 
     const formData = new FormData(e.currentTarget);
 
-    const payload = {
+    const physicalPayload = {
+      heightCm: formData.get("heightCm") ? Number(formData.get("heightCm")) : null,
+      weightKg: formData.get("weightKg") ? Number(formData.get("weightKg")) : null,
+      gender: formData.get("gender") || null,
+      age: formData.get("age") ? Number(formData.get("age")) : null,
+    };
+
+    const conditionPayload = {
       milkAllergy: formData.get("milkAllergy") === "on",
       eggAllergy: formData.get("eggAllergy") === "on",
       diet: formData.get("diet") === "on",
       lowSodium: formData.get("lowSodium") === "on",
     };
 
-    await requestHealthPreferenceSave(payload);
-    alert("건강 정보가 저장되었습니다.");
+    try {
+      await Promise.all([
+        updatePhysicalMetrics(physicalPayload),
+        requestHealthPreferenceSave(conditionPayload),
+      ]);
+      alert("건강 정보가 저장되었습니다.");
+      onRefresh?.();
+    } catch (error) {
+      alert(`저장 중 오류가 발생했습니다: ${error.message}`);
+    }
   };
   return (
     <article className="card-box mt-5">

@@ -98,7 +98,7 @@ export default function MyPageHome() {
         </div>
 
         <ProfileCard profile={displayMyPage.profile} loading={loading} onRefresh={refresh} />
-        <HealthPreferenceCard profile={displayMyPage.profile} loading={loading} />
+        <HealthPreferenceCard profile={displayMyPage.profile} loading={loading} onRefresh={refresh} />
       </section>
 
       <ActivitySummary activity={displayMyPage.activity} loading={loading} />
