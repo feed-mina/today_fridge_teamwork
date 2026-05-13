@@ -12,13 +12,12 @@ export default function MealPage() {
     const [mealLogs, setMealLogs] = useState([]);
     const [reportData, setReportData] = useState(null);
     const [loading, setLoading] = useState(true);
-    const [activeTab, setActiveTab] = useState('daily'); // 'daily', 'weekly', 'monthly'
+    const [activeTab, setActiveTab] = useState('daily');
     const [canRequestRecommendation, setCanRequestRecommendation] = useState(true);
+    const [hoveredDay, setHoveredDay] = useState(null);
 
     useEffect(() => {
         fetchData();
-        
-        // Check if recommendation was already requested today
         const lastDate = localStorage.getItem('lastMealRecommendationDate');
         const today = new Date().toDateString();
         if (lastDate === today) {
@@ -31,15 +30,11 @@ export default function MealPage() {
             router.push('/health-report');
             return;
         }
-        
         try {
-            // Using the new healthReportApi to generate the AI report
-            const data = await healthReportApi.generateHealthReport();
-            
+            await healthReportApi.generateHealthReport();
             const today = new Date().toDateString();
             localStorage.setItem('lastMealRecommendationDate', today);
             setCanRequestRecommendation(false);
-            
             router.push('/health-report');
         } catch (error) {
             console.error("Failed to get recommendation:", error);
@@ -55,22 +50,15 @@ export default function MealPage() {
                     mealApi.getDailyNutrition(),
                     mealApi.getMealLogs()
                 ]);
-                
                 setDailyData(dailyRes);
-                
-                // Adapt backend structure: response is already unwrapped by unwrapApiData
                 const logs = Array.isArray(logsRes) ? logsRes : (logsRes?.data || []);
                 setMealLogs(logs);
             } else {
-                const report = activeTab === 'weekly' 
-                    ? await mealApi.getWeeklyReport() 
-                    : await mealApi.getMonthlyReport();
-                
-                setReportData(report);
+                const report = await (activeTab === 'weekly' ? mealApi.getWeeklyReport() : mealApi.getMonthlyReport());
+                setReportData(report?.data || report);
             }
         } catch (error) {
             console.error(`Failed to fetch ${activeTab} data:`, error);
-            // On error, we reset to empty states rather than using mock data
             if (activeTab === 'daily') {
                 setDailyData(null);
                 setMealLogs([]);
@@ -82,9 +70,10 @@ export default function MealPage() {
         }
     };
 
-    const maxCals = useMemo(() => {
-        if (!reportData || !reportData.dailyData) return 100;
-        return Math.max(...reportData.dailyData.map(d => Number(d.calories)), 100);
+    const maxCalsForGrid = useMemo(() => {
+        if (!reportData?.dailyData?.length) return 2500;
+        const max = Math.max(...reportData.dailyData.map(d => Number(d.calories) || 0));
+        return Math.ceil(max / 500) * 500 + 500;
     }, [reportData]);
 
     const renderProgressBar = (label, current, target, colorClass, unit = 'g') => {
@@ -100,19 +89,105 @@ export default function MealPage() {
                     </span>
                 </div>
                 <div className="w-full bg-gray-100 rounded-full h-1.5 overflow-hidden">
-                    <div 
-                        className={`h-full rounded-full ${colorClass} transition-all duration-1000 ease-out`} 
-                        style={{ width: `${percentage}%` }}
-                    ></div>
+                    <div className={`h-full rounded-full ${colorClass} transition-all duration-1000 ease-out`} style={{ width: `${percentage}%` }}></div>
                 </div>
             </div>
         );
     };
 
-    const tabLabels = {
-        daily: '일간',
-        weekly: '주간',
-        monthly: '월간'
+    const renderLineGraph = () => {
+        if (!reportData?.dailyData?.length) return null;
+        
+        const padding = { top: 40, right: 30, bottom: 40, left: 50 };
+        const width = 800;
+        const height = 300;
+        const chartWidth = width - padding.left - padding.right;
+        const chartHeight = height - padding.top - padding.bottom;
+        
+        const data = reportData.dailyData;
+        const points = data.map((d, i) => ({
+            x: padding.left + (i / (data.length - 1)) * chartWidth,
+            y: padding.top + chartHeight - (Number(d.calories || 0) / maxCalsForGrid) * chartHeight,
+            value: Number(d.calories || 0),
+            date: d.date,
+            imputed: d.imputed || d.isImputed
+        }));
+
+        const linePath = points.map((p, i) => (i === 0 ? `M ${p.x} ${p.y}` : `L ${p.x} ${p.y}`)).join(' ');
+        const areaPath = `${linePath} L ${points[points.length - 1].x} ${padding.top + chartHeight} L ${points[0].x} ${padding.top + chartHeight} Z`;
+
+        const gridLines = [];
+        for (let i = 0; i <= maxCalsForGrid; i += 500) {
+            const y = padding.top + chartHeight - (i / maxCalsForGrid) * chartHeight;
+            gridLines.push(
+                <g key={i}>
+                    <line x1={padding.left} y1={y} x2={width - padding.right} y2={y} stroke="#f0f0f0" strokeWidth="1" />
+                    <text x={padding.left - 10} y={y + 4} textAnchor="end" fontSize="10" fill="#9ca3af">{i}</text>
+                </g>
+            );
+        }
+
+        return (
+            <div className="w-full overflow-x-auto custom-scrollbar pb-4">
+                <div style={{ minWidth: data.length > 15 ? '1000px' : '100%' }}>
+                    <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-auto overflow-visible">
+                        <defs>
+                            <linearGradient id="areaGradient" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="0%" stopColor="var(--color-primary)" stopOpacity="0.3" />
+                                <stop offset="100%" stopColor="var(--color-primary)" stopOpacity="0" />
+                            </linearGradient>
+                        </defs>
+                        
+                        {/* Grid */}
+                        {gridLines}
+                        
+                        {/* Area */}
+                        <path d={areaPath} fill="url(#areaGradient)" />
+                        
+                        {/* Line */}
+                        <path d={linePath} fill="none" stroke="var(--color-primary)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+                        
+                        {/* Points & Interactions */}
+                        {points.map((p, i) => (
+                            <g key={i} onMouseEnter={() => setHoveredDay(p)} onMouseLeave={() => setHoveredDay(null)}>
+                                <circle 
+                                    cx={p.x} 
+                                    cy={p.y} 
+                                    r={hoveredDay?.date === p.date ? 6 : 4} 
+                                    fill={p.imputed ? "#9ca3af" : "var(--color-primary)"} 
+                                    stroke="white" 
+                                    strokeWidth="2"
+                                    className="transition-all duration-200 cursor-pointer"
+                                />
+                                <text 
+                                    x={p.x} 
+                                    y={height - 10} 
+                                    textAnchor="middle" 
+                                    fontSize="9" 
+                                    fill="#6b7280" 
+                                    transform={`rotate(-45, ${p.x}, ${height - 10})`}
+                                >
+                                    {new Date(p.date).toLocaleDateString(undefined, {month:'short', day:'numeric'})}
+                                </text>
+                                
+                                {/* Invisible hit area */}
+                                <rect x={p.x - 15} y={padding.top} width="30" height={chartHeight} fill="transparent" className="cursor-pointer" />
+                            </g>
+                        ))}
+
+                        {/* Tooltip */}
+                        {hoveredDay && (
+                            <g>
+                                <rect x={hoveredDay.x - 40} y={hoveredDay.y - 35} width="80" height="25" rx="4" fill="rgba(0,0,0,0.8)" />
+                                <text x={hoveredDay.x} y={hoveredDay.y - 18} textAnchor="middle" fill="white" fontSize="10" fontWeight="bold">
+                                    {hoveredDay.value.toFixed(0)} kcal
+                                </text>
+                            </g>
+                        )}
+                    </svg>
+                </div>
+            </div>
+        );
     };
 
     return (
@@ -120,31 +195,20 @@ export default function MealPage() {
             <div className={styles.container}>
                 <header className="mb-10 flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
                     <div>
-                        <h1 className="text-3xl font-extrabold tracking-tight text-gray-900">
-                            식단 및 영양 분석
-                        </h1>
+                        <h1 className="text-3xl font-extrabold tracking-tight text-gray-900">식단 및 영양 분석</h1>
                         <p className="text-gray-500 mt-2">일일 섭취량을 추적하고 건강한 균형을 유지하세요.</p>
                     </div>
                     <div className="flex flex-col md:flex-row items-start md:items-center gap-4">
                         <div className="flex flex-col items-end">
-                            <button 
-                                onClick={handleRecommendation}
-                                className={`px-4 py-2 rounded-lg text-sm font-bold transition-all bg-primary text-white hover:bg-primary-hover shadow-md`}
-                                style={{ backgroundColor: 'var(--color-primary)' }}
-                            >
+                            <button onClick={handleRecommendation} className="px-4 py-2 rounded-lg text-sm font-bold transition-all bg-primary text-white hover:bg-primary-hover shadow-md" style={{ backgroundColor: 'var(--color-primary)' }}>
                                 {canRequestRecommendation ? 'AI 식단 추천 받기' : '오늘의 추천 결과 보기'}
                             </button>
                             <p className="text-[10px] text-gray-400 mt-1">새로운 분석은 하루에 한 번만 진행됩니다.</p>
                         </div>
                         <div className="flex space-x-1 bg-white border border-gray-200 rounded-xl p-1 shadow-sm h-fit">
                             {['daily', 'weekly', 'monthly'].map(tab => (
-                                <button 
-                                    key={tab}
-                                    onClick={() => setActiveTab(tab)}
-                                    className={`px-6 py-2 rounded-lg text-sm font-semibold transition-all duration-300 ${activeTab === tab ? 'bg-primary text-white shadow-md' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}
-                                    style={activeTab === tab ? { backgroundColor: 'var(--color-primary)' } : {}}
-                                >
-                                    {tabLabels[tab]}
+                                <button key={tab} onClick={() => setActiveTab(tab)} className={`px-6 py-2 rounded-lg text-sm font-semibold transition-all duration-300 ${activeTab === tab ? 'bg-primary text-white shadow-md' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`} style={activeTab === tab ? { backgroundColor: 'var(--color-primary)' } : {}}>
+                                    {tab === 'daily' ? '일간' : tab === 'weekly' ? '주간' : '월간'}
                                 </button>
                             ))}
                         </div>
@@ -173,7 +237,6 @@ export default function MealPage() {
                                                 <p className="text-xs text-gray-500">목표: {(Number(dailyData.targetCalories) || 0).toFixed(0)} kcal</p>
                                             </div>
                                         </div>
-
                                         <div className="grid grid-cols-1 md:grid-cols-2 gap-x-10 gap-y-2">
                                             <div className="space-y-1">
                                                 <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-4">주요 영양소</h3>
@@ -189,7 +252,6 @@ export default function MealPage() {
                                             </div>
                                         </div>
                                     </div>
-
                                     <div className={styles.glassCard}>
                                         <h2 className="text-xl font-bold mb-6 flex items-center">
                                             <span className="w-8 h-8 rounded-lg bg-pink-100 flex items-center justify-center mr-3">
@@ -204,13 +266,9 @@ export default function MealPage() {
                                                         <div className="flex justify-between items-center">
                                                             <div>
                                                                 <h4 className="font-bold text-gray-800">{log.recipeTitle || log.mealName}</h4>
-                                                                <p className="text-xs text-gray-500">
-                                                                    {log.consumedAt ? new Date(log.consumedAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : log.time} • {log.servings || 1} servings
-                                                                </p>
+                                                                <p className="text-xs text-gray-500">{log.consumedAt ? new Date(log.consumedAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : log.time} • {log.servings || 1} servings</p>
                                                             </div>
-                                                            <div className="bg-primary-light text-primary text-xs font-bold px-3 py-1 rounded-full border border-primary/20" style={{backgroundColor: 'var(--color-primary-light)', color: 'var(--color-primary)'}}>
-                                                                기록됨
-                                                            </div>
+                                                            <div className="bg-primary-light text-primary text-xs font-bold px-3 py-1 rounded-full border border-primary/20" style={{backgroundColor: 'var(--color-primary-light)', color: 'var(--color-primary)'}}>기록됨</div>
                                                         </div>
                                                     </div>
                                                 ))}
@@ -222,7 +280,6 @@ export default function MealPage() {
                                         )}
                                     </div>
                                 </div>
-
                                 <div className="space-y-8">
                                     <div className={`${styles.glassCard} border-primary/30 bg-primary-light/10`}>
                                         <h2 className="text-xl font-bold mb-6 flex items-center">
@@ -244,15 +301,6 @@ export default function MealPage() {
                                             )}
                                         </div>
                                     </div>
-                                    
-                                    <div className={styles.statCard}>
-                                        <div className="text-primary mb-2" style={{color: 'var(--color-primary)'}}>
-                                            <svg className="w-8 h-8 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
-                                        </div>
-                                        <h3 className="text-sm font-bold text-gray-500 uppercase tracking-widest">개인 프로필</h3>
-                                        <p className="text-xs text-gray-400 mt-2">영양 목표는 신체 지표를 바탕으로 계산됩니다.</p>
-                                        <button className="mt-4 text-xs font-bold text-primary hover:text-primary-hover transition-colors uppercase tracking-widest" style={{color: 'var(--color-primary)'}}>프로필 수정</button>
-                                    </div>
                                 </div>
                             </div>
                         )}
@@ -272,7 +320,6 @@ export default function MealPage() {
                                         </div>
                                     ))}
                                 </div>
-
                                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                                     <div className="lg:col-span-2">
                                         <div className={styles.glassCard}>
@@ -287,30 +334,9 @@ export default function MealPage() {
                                                     </div>
                                                 </div>
                                             </div>
-                                            <div className="flex h-64 items-end space-x-1.5 w-full overflow-x-auto pb-6 custom-scrollbar">
-                                                {reportData.dailyData.map((day, idx) => {
-                                                    const val = Number(day.calories) || 0;
-                                                    const heightPct = (val / maxCals) * 100;
-                                                    
-                                                    return (
-                                                        <div key={idx} className="flex flex-col items-center flex-1 min-w-[30px] group">
-                                                            <div className="text-[10px] font-bold text-gray-400 mb-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                                {val.toFixed(0)}
-                                                            </div>
-                                                            <div 
-                                                                className={`w-full rounded-t-md transition-all duration-700 ease-out hover:scale-x-110 origin-bottom ${day.isImputed ? styles.trendBarImputed : styles.trendBarActual}`}
-                                                                style={{ height: `${Math.max(heightPct, 5)}%` }}
-                                                            ></div>
-                                                            <div className="text-[9px] font-medium text-gray-500 mt-3 -rotate-45 origin-left whitespace-nowrap">
-                                                                {new Date(day.date).toLocaleDateString(undefined, {month:'short', day:'numeric'})}
-                                                            </div>
-                                                        </div>
-                                                    );
-                                                })}
-                                            </div>
+                                            {renderLineGraph()}
                                         </div>
                                     </div>
-
                                     <div className="space-y-6">
                                         <div className={styles.glassCard}>
                                             <h3 className="text-sm font-bold text-gray-400 uppercase tracking-widest mb-6">보조 영양소 평균</h3>
@@ -327,16 +353,13 @@ export default function MealPage() {
                                                 ))}
                                             </div>
                                         </div>
-
                                         {reportData.missingDaysImputed > 0 && (
                                             <div className="bg-primary-light border border-primary/10 rounded-2xl p-5" style={{backgroundColor: 'var(--color-primary-light)', opacity: 0.8}}>
                                                 <div className="flex items-center text-primary mb-2" style={{color: 'var(--color-primary)'}}>
                                                     <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
                                                     <span className="text-xs font-bold uppercase tracking-tighter">데이터 알림</span>
                                                 </div>
-                                                <p className="text-xs text-gray-500 leading-relaxed">
-                                                    기록이 누락된 <span className="text-primary font-bold" style={{color: 'var(--color-primary)'}}>{reportData.missingDaysImputed}일</span>의 데이터가 있습니다. 연속적인 분석을 위해 사용자의 평균 섭취 패턴을 기반으로 추정치를 적용했습니다.
-                                                </p>
+                                                <p className="text-xs text-gray-500 leading-relaxed">기록이 누락된 <span className="text-primary font-bold" style={{color: 'var(--color-primary)'}}>{reportData.missingDaysImputed}일</span>의 데이터가 있습니다. 추정치를 적용했습니다.</p>
                                             </div>
                                         )}
                                     </div>
