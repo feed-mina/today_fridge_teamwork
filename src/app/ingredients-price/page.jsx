@@ -289,47 +289,30 @@ export default function IngredientsPrice() {
 
   const [searchResult, setSearchResult] = useState(null);
   const [searchLoading, setSearchLoading] = useState(false);
+  const [fridgeEmpty, setFridgeEmpty] = useState(false);
 
-  // 페이지 초기 로딩: 사과·우유를 실시간 API로 조회 (예시 아이템)
-  const fetchDefaultPrices = useCallback(async () => {
-    try {
-      setLoading(true);
-      const [appleRes, milkRes] = await Promise.all([
-        shoppingApi.searchByKeyword("사과"),
-        shoppingApi.searchByKeyword("우유"),
-      ]);
-      const results = [
-        appleRes.data?.data || appleRes.data,
-        milkRes.data?.data || milkRes.data,
-      ].filter((r) => r && r.items?.length > 0);
-      if (results.length > 0) setPriceData(results);
-    } catch (err) {
-      console.error("기본 가격 조회 실패:", err?.message);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  // 냉장고 식재료 기반 최저가 조회 (진입 시 자동 호출, 비어있으면 예시로 fallback)
+  // 냉장고 식재료 기반 최저가 조회 (진입 시 자동 호출, 비어있으면 안내 메시지 표시)
   const fetchFridgePrices = useCallback(async () => {
     setLoading(true);
+    setFridgeEmpty(false);
     try {
       const res = await shoppingApi.getFridgePrices();
       const dataPayload = res.data?.data || res.data;
       const list = Array.isArray(dataPayload) ? dataPayload : [];
       if (list.length > 0) {
         setPriceData(list);
-        setLoading(false);
       } else {
-        setLoading(false);
-        fetchDefaultPrices();
+        setPriceData([]);
+        setFridgeEmpty(true);
       }
     } catch (err) {
       console.error("냉장고 가격 조회 실패:", err?.message);
+      setPriceData([]);
+      setFridgeEmpty(true);
+    } finally {
       setLoading(false);
-      fetchDefaultPrices();
     }
-  }, [fetchDefaultPrices]);
+  }, []);
 
   // URL query param ?search=간장 이 있으면 자동 검색 실행
   useEffect(() => {
@@ -498,9 +481,16 @@ export default function IngredientsPrice() {
           </div>
         )}
 
-        {searchResult === null && !loading && filtered.length === 0 && (
+        {searchResult === null && !loading && filtered.length === 0 && fridgeEmpty && (
           <div className="text-center py-16 text-[#8a8078]">
-            {search ? "검색 결과가 없습니다." : "가격 정보를 불러오는 중입니다..."}
+            <p className="text-lg mb-2">🧊 냉장고가 비어있어요</p>
+            <p className="text-sm">냉장고에 식재료를 추가하면 최저가를 확인할 수 있어요</p>
+          </div>
+        )}
+
+        {searchResult === null && !loading && filtered.length === 0 && !fridgeEmpty && search && (
+          <div className="text-center py-16 text-[#8a8078]">
+            검색 결과가 없습니다.
           </div>
         )}
 
